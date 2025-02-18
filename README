@@ -1,2 +1,8 @@
 Witajcie!
 testuje swoje możliwości tworzenia apki flutter z użyciem fastApi, docker, postgre dla celów osobistych cdn.
+
+Personal Training App
+O Projekcie
+Cel: rejestrowanie i wyświetlanie postępów treningowych (w bojach: Bench Press, Squats, Deadlift, wraz z ich One Rep Max oraz sets "+").
+Front-end: Flutter (obsługa interfejsu, wyświetlanie danych).
+Back-end: FastAPI (w Pythonie) z bazą PostgreSQL (w Dockerze lub lokalnie).
