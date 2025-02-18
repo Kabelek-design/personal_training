@@ -19,12 +19,12 @@ services:
     # restart: always  # <- w production można ustawić
 
   db:
-    image: postgres:15
+    image: postgres:17.0
     container_name: my_postgres_db
     restart: always
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: secret
+      POSTGRES_PASSWORD: fastapi
       POSTGRES_DB: training_db
     ports:
       - "5432:5432"
