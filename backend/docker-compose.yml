@@ -1,0 +1,35 @@
+services:
+  backend:
+    build: 
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: my_fastapi_backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    environment:
+    - POSTGRES_USER
+    - POSTGRES_PASSWORD
+    - POSTGRES_DB
+    - DATABASE_URL
+
+    volumes:
+      - .:/app
+    # restart: always  # <- w production można ustawić
+
+  db:
+    image: postgres:15
+    container_name: my_postgres_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: training_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
