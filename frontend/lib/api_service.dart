@@ -3,6 +3,9 @@ import 'package:http/http.dart' as http;
 import 'constants.dart';
 
 class ApiService {
+
+
+
   Future<List<Map<String, dynamic>>> fetchExercises() async {
     try {
       final response = await http.get(Uri.parse('$BASE_URL$EXERCISES_ENDPOINT'));
@@ -28,4 +31,22 @@ class ApiService {
       throw Exception('Wystąpił wyjątek: $e');
     }
   }
+
+
+  Future<void> addExercise(String name, int maxValue) async {
+  final response = await http.post(
+    Uri.parse('$BASE_URL/exercises'),
+    headers: {"Content-Type": "application/json"},
+    body: jsonEncode({
+      "exercise": name,
+      "max_value": maxValue,
+    }),
+  );
+
+  if (response.statusCode != 200) {
+    throw Exception('Błąd: ${response.statusCode}, treść: ${response.body}');
+  }
+  // Jeśli wszystko ok, możesz np. zwrócić response lub przerobić go na obiekt
+}
+
 }

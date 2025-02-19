@@ -1,32 +1,49 @@
-# app/routers/exercises.py
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+
 from app.db import SessionLocal
 from app.models import OneRepMax
 
 router = APIRouter()
 
-@router.post("/populate")
-def populate_exercises():
-    """
-    Dodaje trzy ćwiczenia do bazy danych:
-      - Bench_press, one_rep_max=180
-      - Squats, one_rep_max=200
-      - Dead_lift, one_rep_max=250
-    """
+class ExerciseCreate(BaseModel):
+    exercise: str
+    max_value: int
+
+def get_db():
+    """Prosta funkcja 'dependencji', zwracająca obiekt Session."""
     db = SessionLocal()
     try:
-        data = [
-            ("Bench_press", 180),
-            ("Squats", 200),
-            ("Dead_lift", 250)
-        ]
-        for exercise, value in data:
-            record = OneRepMax(exercise=exercise, max_value=value)
-            db.add(record)
-        db.commit()
-        return {"status": "ok", "info": "Dodano 3 ćwiczenia"}
+        yield db
     finally:
         db.close()
+
+@router.post("/exercises")
+def create_exercise(ex_data: ExerciseCreate, db: Session = Depends(get_db)):
+    """
+    Tworzy nowe ćwiczenie w bazie na podstawie danych przesłanych w POST.
+    
+    Przykładowy JSON w body:
+    {
+      "exercise": "Bench_press",
+      "max_value": 180
+    }
+    """
+    record = OneRepMax(
+        exercise=ex_data.exercise,
+        max_value=ex_data.max_value
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)  # odświeżenie, aby mieć np. wygenerowane ID
+
+    return {
+        "status": "ok",
+        "new_id": record.id,
+        "info": f"Dodano ćwiczenie {record.exercise} z wynikiem {record.max_value}."
+    }
+
 
 
 @router.get("/exercises")
