@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:hive/hive.dart';
-import '../data/training_data.dart';
 import '../models/training_model.dart';
 import '../utils/calculate_weights.dart';
+import '../api_service.dart';
 
 class TrainingScreen extends StatefulWidget {
   const TrainingScreen({super.key});
@@ -13,310 +12,344 @@ class TrainingScreen extends StatefulWidget {
 
 class _TrainingScreenState extends State<TrainingScreen> {
   int selectedWeek = 1;
-  late Box trainingBox;
+  final ApiService _apiService = ApiService(); // API do pobierania danych
 
-  final Map<String, TextEditingController> oneRepMaxControllers = {};
-  final Map<String, TextEditingController> amrapControllers = {};
-  Map<String, double> oneRepMaxes = {
-    "Przysiady": 100,
-    "Martwy ciąg": 120,
-    "Wyciskanie leżąc": 80,
+  TrainingPlan? _currentPlan; // Aktualny plan treningowy pobrany z backendu
+  Map<String, double> oneRepMaxes = {}; // Przechowuje 1RM pobrane z backendu
+  bool _isLoading = true;
+  String _errorMessage = '';
+
+  // Mapowanie nazw ćwiczeń (API -> Frontend)
+  Map<String, String> nameMappingOneRepMax = {
+    "Przysiady": "Squats",
+    "Martwy ciąg": "Dead_lift",
+    "Wyciskanie leżąc": "Bench_press",
   };
+
+  Map<String, String> nameMappingTrainingPlan = {
+  "squats": "Przysiady",
+  "dead_lift": "Martwy ciąg",
+  "bench_press": "Wyciskanie leżąc",
+};
+
+
+  // Kontrolery do wpisania faktycznych powtórzeń w serii plus
+  Map<String, TextEditingController> plusControllers = {};
 
   @override
   void initState() {
     super.initState();
-    trainingBox = Hive.box('training_data');
-    _loadData();
+    _loadOneRepMaxes();
+    _loadTrainingPlan();
   }
 
-  void _loadData() {
-    // Wczytywanie 1RM z bazy
-    for (var exercise in oneRepMaxes.keys) {
-      double value = trainingBox.get(exercise,
-          defaultValue: oneRepMaxes[exercise]) as double;
-      oneRepMaxes[exercise] = value;
-      oneRepMaxControllers[exercise] =
-          TextEditingController(text: value.toStringAsFixed(1));
-    }
+  /// Pobiera dane o 1RM z backendu i mapuje je na odpowiednie nazwy.
+  Future<void> _loadOneRepMaxes() async {
+    try {
+      final exercises = await _apiService.fetchExercises();
 
-    // Wczytywanie wyników AMRAP z bazy
-    for (var plan in trainingPlans) {
-      for (var exercise in plan.exercises) {
-        for (var set in exercise.sets) {
-          if (set.isAMRAP) {
-            String key = "${exercise.name}_${set.percentage}";
-            int savedReps = trainingBox.get(key, defaultValue: 0) as int;
-            amrapControllers[key] = TextEditingController(
-              text: savedReps > 0 ? savedReps.toString() : "",
-            );
-          }
-        }
-      }
+      // Zbuduj mapę, np. "Bench_press" -> 180.0
+      Map<String, double> fetchedMaxes = {
+        for (var ex in exercises)
+          ex['exercise']: (ex['max_value'] as num).toDouble()
+      };
+
+      setState(() {
+        oneRepMaxes = fetchedMaxes;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Błąd pobierania 1RM: $e';
+      });
     }
   }
 
-  void _saveOneRepMax(String exercise, String value) {
-    double parsedValue = double.tryParse(value) ?? oneRepMaxes[exercise]!;
+  /// Pobiera plan treningowy dla wybranego tygodnia z backendu.
+  Future<void> _loadTrainingPlan() async {
     setState(() {
-      oneRepMaxes[exercise] = parsedValue;
-      trainingBox.put(exercise, parsedValue);
+      _isLoading = true;
     });
-  }
-
-  void _saveAmrapReps(String key, String value) {
-    int reps = int.tryParse(value) ?? 0;
-    trainingBox.put(key, reps);
-  }
-
-  /// Metoda obliczająca progresję TYLKO dla jednej serii (jednego ćwiczenia i procentu).
-  /// Wywołujesz ją z małego przycisku obok TextFielda.
-  void _calculateProgressionForSet(
-    String exerciseName,
-    double percentage,
-    int? recommendedReps,
-  ) {
-    // Jeśli nie mamy rekomendowanych powtórzeń, to nic nie robimy.
-    if (recommendedReps == null) return;
-
-    // Odczytujemy liczbę powtórzeń z bazy (AMRAP).
-    final String key = "${exerciseName}_$percentage";
-    int userReps = trainingBox.get(key, defaultValue: 0) as int;
-
-    // Jeśli użytkownik zrobił >= recommendedReps, zwiększamy ciężar na następny tydzień.
-    if (userReps >= recommendedReps) {
-      double increment = 0;
-      if (exerciseName == "Przysiady" || exerciseName == "Martwy ciąg") {
-        increment = 5.0;
-      } else if (exerciseName == "Wyciskanie leżąc") {
-        increment = 2.5;
-      }
-      // Można tu wywołać np. metodę aktualizującą "next_week_plan_2", "next_week_plan_3", itd.
-      _updateNextWeekWeightForExercise(exerciseName, increment);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Zwiększono ciężar dla $exerciseName o $increment kg!")),
-      );
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Nie osiągnięto wymaganej liczby powtórzeń.")),
-      );
+    try {
+      final plan = await _apiService.fetchTrainingPlanByWeek(selectedWeek);
+      setState(() {
+        _currentPlan = plan;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Błąd ładowania planu treningowego: $e';
+        _isLoading = false;
+      });
     }
-  }
-
-  /// Przykładowa metoda aktualizująca plan na następny tydzień (lub 1RM) dla konkretnego ćwiczenia.
-  void _updateNextWeekWeightForExercise(String exerciseName, double increment) {
-    int nextWeek = selectedWeek + 1;
-    if (nextWeek > 3) return; // jeśli mamy tylko 3 tygodnie
-
-    // W tym przykładzie kluczem jest "next_week_plan_$nextWeek".
-    // Możesz przechowywać tam obiekt TrainingPlan lub np. same 1RM.
-    TrainingPlan? nextPlan = trainingBox.get("next_week_plan_$nextWeek");
-
-    // Jeśli jeszcze nie ma planu na kolejny tydzień, utwórz pusty.
-    if (nextPlan == null) {
-      nextPlan = TrainingPlan(week: nextWeek, exercises: []);
-    }
-
-    // Tutaj przykładowo podnosimy w bazie 1RM na następny tydzień,
-    // albo dopisujemy "dodatkowe" kg do planu nextPlan.
-    double currentOneRm = oneRepMaxes[exerciseName] ?? 0;
-    double newOneRm = currentOneRm + increment;
-
-    // Możesz zapisywać to w:
-    // 1) nextPlan (jeśli masz taką strukturę) albo
-    // 2) bezpośrednio w trainingBox (osobny klucz np. "exerciseName_nextWeek_1rm"),
-    // 3) ustawiać w mapie oneRepMaxes, itp.
-
-    // Przykładowo: zapisz do Hive, żebyś mógł to potem wczytać jako startowy 1RM na kolejny tydzień.
-    trainingBox.put("${exerciseName}_1rm_week_$nextWeek", newOneRm);
-
-    // Zaktualizuj i zapisz plan.
-    trainingBox.put("next_week_plan_$nextWeek", nextPlan);
-  }
-
-  @override
-  void dispose() {
-    oneRepMaxControllers.values.forEach((controller) => controller.dispose());
-    amrapControllers.values.forEach((controller) => controller.dispose());
-    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    TrainingPlan currentPlan =
-        trainingPlans.firstWhere((plan) => plan.week == selectedWeek);
+    // Jeśli trwa ładowanie lub plan jeszcze nie został pobrany, pokaż loader
+    if (_isLoading || _currentPlan == null) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text("Twój plan treningowy"),
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final currentPlan = _currentPlan!;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text("Twój plan treningowy"),
         actions: [
+          // Wybór tygodnia w AppBar
           DropdownButton<int>(
             value: selectedWeek,
-            items: [1, 2, 3].map((week) {
+            items: [1, 2, 3, 4, 5, 6].map((week) {
               return DropdownMenuItem(
                 value: week,
                 child: Text("Tydzień $week"),
               );
             }).toList(),
-            onChanged: (week) {
-              if (week != null) {
+            onChanged: (val) {
+              if (val != null) {
                 setState(() {
-                  selectedWeek = week;
+                  selectedWeek = val;
                 });
+                _loadTrainingPlan(); // Załaduj plan dla nowego tygodnia
               }
             },
           ),
         ],
       ),
-      // USUWAMY floatingActionButton - nie będzie globalnego przycisku
-      // floatingActionButton: FloatingActionButton(
-      //   onPressed: _calculateProgression,
-      //   tooltip: "Oblicz progresję",
-      //   child: const Icon(Icons.calculate),
-      // ),
-      body: Column(
-        children: [
-          // Pola do edycji 1RM
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Column(
-              children: oneRepMaxes.keys.map((exerciseName) {
-                return TextField(
-                  controller: oneRepMaxControllers[exerciseName],
-                  keyboardType: TextInputType.number,
-                  decoration: InputDecoration(
-                    labelText: "1RM dla $exerciseName (kg)",
-                  ),
-                  onChanged: (value) => _saveOneRepMax(exerciseName, value),
-                );
-              }).toList(),
-            ),
-          ),
-          // Lista ćwiczeń na wybrany tydzień
-          Expanded(
-            child: ListView.builder(
-              itemCount: currentPlan.exercises.length,
-              itemBuilder: (context, index) {
-                final exercise = currentPlan.exercises[index];
-                double oneRepMax = oneRepMaxes[exercise.name] ?? 100;
-                // Oblicz zaktualizowane serie
-                List<TrainingSet> updatedSets =
-                    calculateWeights(exercise.sets, oneRepMax);
-
-                return Card(
-                  margin: const EdgeInsets.all(8),
-                  child: ExpansionTile(
-                    title: Text(
-                      exercise.name,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    children: updatedSets.map((set) {
-                      String key = "${exercise.name}_${set.percentage}";
-                      if (set.isAMRAP && !amrapControllers.containsKey(key)) {
-                        amrapControllers[key] = TextEditingController();
+      body: _errorMessage.isNotEmpty
+          ? Center(
+              child: Text(
+                _errorMessage,
+                style: const TextStyle(color: Colors.red, fontSize: 16),
+              ),
+            )
+          : Column(
+              children: [
+                // =======================
+                // SEKCJA 1RM (Karty)
+                // =======================
+                Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      // Ustal ilość kart w rzędzie
+                      int crossAxisCount = 3;
+                      if (constraints.maxWidth < 600) {
+                        crossAxisCount = 2;
+                      }
+                      if (constraints.maxWidth < 400) {
+                        crossAxisCount = 1;
                       }
 
-                      return Column(
-                        children: [
-                          ListTile(
-                            title: Text(
-                              "${set.reps} powtórzeń - ${set.percentage}% maksymalnego ciężaru",
-                              style: const TextStyle(fontSize: 16),
-                            ),
-                            subtitle: Text(
-                              "Ciężar: ${set.weight?.toStringAsFixed(1)} kg",
-                              style: const TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                          if (set.isAMRAP) ...[
-                            const SizedBox(height: 8),
-                            Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 16),
-                              child: Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 6,
-                                          horizontal: 10,
-                                        ),
-                                        decoration: BoxDecoration(
-                                          color: Colors.orangeAccent,
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                        ),
-                                        child: const Text(
-                                          "SERIA +",
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
+                      return Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: oneRepMaxes.keys.map((exerciseKey) {
+                          // Odszukaj nazwę frontową, np. "Przysiady"
+                          String displayName = nameMappingOneRepMax.entries
+                              .firstWhere(
+                                (entry) => entry.value == exerciseKey,
+                                orElse: () =>
+                                    MapEntry(exerciseKey, exerciseKey),
+                              )
+                              .key;
+
+                          // Oblicz szerokość karty
+                          double cardWidth =
+                              constraints.maxWidth / crossAxisCount - 12;
+
+                          return SizedBox(
+                            width: cardWidth,
+                            child: Card(
+                              elevation: 3,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  color: Colors.blue.shade50,
+                                ),
+                                child: Column(
+                                  children: [
+                                    Text(
+                                      displayName,
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
                                       ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        "Zalecane powtórzenia: ${set.recommendedReps}",
-                                        style: const TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  SizedBox(
-                                    width: 60,
-                                    child: TextField(
-                                      controller: amrapControllers[key],
-                                      keyboardType: TextInputType.number,
                                       textAlign: TextAlign.center,
-                                      decoration: const InputDecoration(
-                                        hintText: "0",
-                                        border: OutlineInputBorder(),
-                                        contentPadding: EdgeInsets.symmetric(
-                                          vertical: 5,
-                                          horizontal: 5,
-                                        ),
-                                      ),
-                                      onChanged: (value) =>
-                                          _saveAmrapReps(key, value),
                                     ),
-                                  ),
-                                  // DODAJEMY IKONKĘ, która liczy progresję TYLKO dla tej serii.
-                                  IconButton(
-                                    icon: const Icon(Icons.calculate),
-                                    onPressed: () {
-                                      _calculateProgressionForSet(
-                                        exercise.name,
-                                        set.percentage ?? 0,
-                                        set.recommendedReps,
-                                      );
-                                    },
-                                  ),
-                                ],
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      "${oneRepMaxes[exerciseKey]?.toStringAsFixed(1) ?? '-'} kg",
+                                      style: const TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.blue,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                            const SizedBox(height: 12),
-                          ],
-                        ],
+                          );
+                        }).toList(),
                       );
-                    }).toList(),
+                    },
                   ),
-                );
-              },
+                ),
+                // =======================
+                // LISTA ĆWICZEŃ (Tygodniowa)
+                // =======================
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: currentPlan.exercises.length,
+                    itemBuilder: (context, index) {
+                      final exercise = currentPlan.exercises[index];
+
+                      // Mapujemy nazwę ćwiczenia (np. "Przysiady" -> "Squats")
+                      String apiName =
+                          nameMappingTrainingPlan[exercise.name] ?? exercise.name;
+                      double oneRepMax = oneRepMaxes[apiName] ?? 100;
+
+                      // Obliczamy serie – calculateWeights powinno przyjmować listę setów
+                      // i na podstawie oneRepMax (pobranej z backendu) oraz procentu (percentage)
+                      // obliczyć właściwy ciężar, np.: weight = oneRepMax * (set.percentage / 100) + increment
+                      List<TrainingSet> updatedSets =
+                          calculateWeights(exercise.sets, oneRepMax);
+
+                      return Card(
+                        margin: const EdgeInsets.all(8),
+                        child: ExpansionTile(
+                          title: Text(
+  apiName, // lub nameMappingTrainingPlan[exercise.name]
+  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+),
+
+                          children: updatedSets.asMap().entries.map((entry) {
+                            // entry.key => index serii
+                            // entry.value => TrainingSet
+                            final i = entry.key;
+                            final set = entry.value;
+
+                            // Generujemy klucz do mapy plusControllers
+                            String plusKey = "${exercise.name}_$i";
+
+                            // Tworzymy TextEditingController dla serii plus, jeśli go nie ma
+                            if (set.isAMRAP &&
+                                !plusControllers.containsKey(plusKey)) {
+                              plusControllers[plusKey] = TextEditingController();
+                            }
+
+                            // Określamy próg powtórzeń – wartość ta może być zdefiniowana według logiki Twojego planu
+                            int neededReps = 999;
+                            if (set.reps == 6) neededReps = 12;
+                            if (set.reps == 4) neededReps = 7;
+                            if (set.reps == 2) neededReps = 4;
+
+                            return ListTile(
+                              title: RichText(
+                                text: TextSpan(
+                                  style: const TextStyle(
+                                      fontSize: 16, color: Colors.black),
+                                  children: [
+                                    TextSpan(
+                                      text:
+                                          "${set.reps} powtórzeń - ${set.percentage}% maksymalnego ciężaru",
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.normal),
+                                    ),
+                                    if (set.isAMRAP)
+                                      const TextSpan(
+                                        text: " (Seria +)",
+                                        style: TextStyle(
+                                          color: Colors.red,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              subtitle: Text(
+                                "Ciężar: ${set.weight?.toStringAsFixed(1)} kg",
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold),
+                              ),
+                              // Jeżeli seria plus, daj TextField do wpisania faktycznych powtórzeń
+                              trailing: set.isAMRAP
+                                  ? SizedBox(
+                                      width: 60,
+                                      child: TextField(
+                                        controller: plusControllers[plusKey],
+                                        keyboardType: TextInputType.number,
+                                        decoration: const InputDecoration(
+                                          labelText: "Reps",
+                                          border: OutlineInputBorder(),
+                                        ),
+                                        onChanged: (val) {
+                                          int repsDone =
+                                              int.tryParse(val) ?? 0;
+
+                                          if (repsDone >= neededReps) {
+                                            double increment =
+                                                exercise.name == "Wyciskanie leżąc"
+                                                    ? 2.5
+                                                    : 5.0;
+
+                                            double? oldWeight = set.weight;
+                                            double newWeight =
+                                                (oldWeight ?? 0) + increment;
+
+                                            // Wywołanie metody PATCH na backendzie
+                                            _apiService
+                                                .patchAddWeight(
+                                              weekNumber: selectedWeek,
+                                              exerciseName: exercise.name,
+                                              actualReps: repsDone,
+                                              addKg: increment,
+                                            )
+                                                .then((_) {
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    "Przekroczono próg dla ${exercise.name}!\n" +
+                                                        "Stary ciężar: ${oldWeight?.toStringAsFixed(1)} kg, " +
+                                                        "Zalecany: ${newWeight.toStringAsFixed(1)} kg",
+                                                  ),
+                                                ),
+                                              );
+                                            }).catchError((error) {
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                      'Błąd aktualizacji: $error'),
+                                                ),
+                                              );
+                                            });
+                                          }
+                                        },
+                                      ),
+                                    )
+                                  : null,
+                            );
+                          }).toList(),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
-      ),
     );
   }
 }

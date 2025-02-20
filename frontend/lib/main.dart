@@ -2,34 +2,37 @@ import 'package:flutter/material.dart';
 import 'screens/training_screen.dart';
 import 'screens/diet_screen.dart';
 import 'screens/stats_screen.dart';
-import 'package:hive_flutter/hive_flutter.dart';
+import 'screens/profile.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-final FlutterLocalNotificationsPlugin notificationsPlugin = FlutterLocalNotificationsPlugin();
+final FlutterLocalNotificationsPlugin notificationsPlugin =
+    FlutterLocalNotificationsPlugin();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Hive.initFlutter();
-  await Hive.openBox('training_data');
 
-  const AndroidInitializationSettings androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-  final InitializationSettings initSettings = InitializationSettings(android: androidSettings);
+  const AndroidInitializationSettings androidSettings =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  final InitializationSettings initSettings =
+      InitializationSettings(android: androidSettings);
   await notificationsPlugin.initialize(initSettings);
   runApp(const MyApp());
 }
 
-
 void showWorkoutReminder() async {
   const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-    'workout_channel', 'Workout Reminder',
-    importance: Importance.high, priority: Priority.high,
+    'workout_channel',
+    'Workout Reminder',
+    importance: Importance.high,
+    priority: Priority.high,
   );
 
-  const NotificationDetails generalNotificationDetails = NotificationDetails(android: androidDetails);
+  const NotificationDetails generalNotificationDetails =
+      NotificationDetails(android: androidDetails);
 
-  await notificationsPlugin.show(0, "Czas na trening!", "Dzisiaj masz siady!", generalNotificationDetails);
+  await notificationsPlugin.show(
+      0, "Czas na trening!", "Dzisiaj masz siady!", generalNotificationDetails);
 }
-
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -60,6 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
     TrainingScreen(),
     DietScreen(),
     StatsScreen(),
+    ProfileScreen(),
   ];
 
   void _onItemTapped(int index) {
@@ -74,12 +78,19 @@ class _HomeScreenState extends State<HomeScreen> {
       body: _pages[_selectedIndex],
       bottomNavigationBar: BottomNavigationBar(
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.fitness_center), label: "Trening"),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.fitness_center), label: "Trening"),
           BottomNavigationBarItem(icon: Icon(Icons.restaurant), label: "Dieta"),
-          BottomNavigationBarItem(icon: Icon(Icons.bar_chart), label: "Statystyki"),
+          BottomNavigationBarItem(
+              icon: Icon(Icons.bar_chart), label: "Statystyki"),
+          BottomNavigationBarItem(icon: Icon(Icons.person), label: "Profil"),
         ],
         currentIndex: _selectedIndex,
         onTap: _onItemTapped,
+        selectedItemColor: Colors.black, 
+        unselectedItemColor: Colors.black, 
+        type: BottomNavigationBarType
+            .fixed, 
       ),
     );
   }
